@@ -167,8 +167,8 @@
     }
   </style>
 
-  <!-- tmi.js for Twitch chat -->
-  <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
+  <!-- tmi.js via ESM to avoid MIME nosniff issues -->
+  <!-- Loaded via import in the module script below -->
 </head>
 <body>
   <header>
@@ -217,7 +217,10 @@
     </section>
   </main>
 
-  <script>
+  <script type="module">
+    import tmi from 'https://esm.sh/tmi.js@1.8.5';
+    // Expose globally if any external code expects window.tmi
+    window.tmi = tmi;
     // ========= Configuration (set these) =========
     const TWITCH_CLIENT_ID = 'lihxdhjxpzachp1h2z4nerzxszbgar';
     const REDIRECT_URI = 'https://shirk33y.github.io/twitchlegends/'; // must match your Twitch app config
