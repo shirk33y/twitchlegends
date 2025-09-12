@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Twitch Realtime Chat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- App Theme -->
+  <style>
+    :root{
+      --bg:#0f1220;
+      --panel:#171a2a;
+      --panel-2:#1d2135;
+      --text:#e8eaf6;
+      --muted:#9aa1b5;
+      --accent:#9146FF; /* Twitch purple */
+      --danger:#ff4d4f;
+      --success:#2ecc71;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      background: radial-gradient(1200px 800px at 20% -10%, #22254a55 0%, transparent 60%),
+                  radial-gradient(1000px 600px at 100% 0%, #2c2f5a44 0%, transparent 60%),
+                  var(--bg);
+      color:var(--text);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      display:flex;
+      flex-direction:column;
+      gap:16px;
+    }
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:16px 20px;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      font-weight:700;
+      letter-spacing:.2px;
+    }
+    .brand .logo{
+      width:34px;height:34px;border-radius:10px;background:var(--accent);
+      display:grid;place-items:center;color:#fff;box-shadow: var(--shadow);
+      font-weight:800;
+    }
+    .actions{
+      display:flex;align-items:center;gap:10px;
+    }
+    button, .btn{
+      appearance:none;border:none;background:var(--accent);color:white;
+      padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;
+      transition:.2s transform,.2s opacity,.2s background;
+      box-shadow: var(--shadow);
+    }
+    button.secondary{
+      background:transparent;border:1px solid #3a3f6a;color:var(--text);
+    }
+    button:active{transform: translateY(1px)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+
+    .container{
+      flex:1;
+      padding:0 20px 20px;
+      display:grid;
+      grid-template-rows: auto 1fr;
+      gap:14px;
+      max-width:1100px;
+      margin:0 auto;
+      width:100%;
+    }
+
+    .panel{
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border:1px solid #2b3154;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .controls{
+      display:grid;grid-template-columns: 1fr auto auto;gap:10px;
+      padding:14px;
+      align-items:center;
+    }
+    .identity{
+      display:flex;align-items:center;gap:10px;min-width:0;
+    }
+    .avatar{
+      width:32px;height:32px;border-radius:50%;background:#2e335a;flex:0 0 auto;
+      display:grid;place-items:center;font-size:12px;color:#d1d6ff;border:1px solid #3a3f6a
+    }
+    .userline{
+      min-width:0;display:flex;flex-direction:column;
+    }
+    .userline b{
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .userline small{color:var(--muted)}
+
+    .field{
+      display:flex;gap:8px;align-items:center;justify-content:flex-end;
+    }
+    input[type="text"]{
+      background:#10142a;border:1px solid #2b3154;color:var(--text);
+      padding:10px 12px;border-radius:10px;min-width:220px;outline:none;
+      transition:border-color .2s;
+    }
+    input[type="text"]:focus{border-color:#5160ff}
+
+    .chat{
+      display:grid;grid-template-rows: 1fr auto;min-height:60vh;
+    }
+    .messages{
+      overflow:auto;padding:16px 12px 12px;
+      display:flex;flex-direction:column;gap:8px;
+      scroll-behavior:smooth;
+    }
+    .msg{
+      display:grid;
+      grid-template-columns: auto 1fr;
+      gap:10px;
+      padding:10px 12px;
+      background:#121632cc;border:1px solid #2b3154;border-radius:12px;
+      transition:.2s background;
+    }
+    .msg:hover{background:#171b3acc}
+    .meta{
+      display:flex;gap:8px;align-items:center;color:#c9cdfc;
+      font-size:12px;opacity:.9;
+    }
+    .badge{
+      display:inline-flex;align-items:center;gap:4px;font-size:11px;
+      background:#2a2f5a;border:1px solid #3a3f6a;color:#e1e3ff;
+      border-radius:999px;padding:2px 8px;
+    }
+    .name{font-weight:700}
+    .time{color:#9aa1b5}
+    .text{white-space:pre-wrap;word-break:break-word;color:#eef0ff}
+
+    .composer{
+      display:flex;gap:10px;padding:12px;border-top:1px solid #2b3154;background:#121632aa;border-radius:0 0 var(--radius) var(--radius)
+    }
+    .info{
+      margin-top:-2px;color:var(--muted);font-size:12px;text-align:right;padding:0 2px 6px;
+    }
+    .status{
+      display:flex;gap:8px;align-items:center;color:#b9c0d6;font-size:13px;padding:8px 14px;border-bottom:1px solid #2b3154;background:#121632aa;border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .dot{
+      width:8px;height:8px;border-radius:50%;
+      background:#666;
+      box-shadow:0 0 0 3px #0003 inset;
+    }
+    .dot.on{background:var(--success)}
+    .subtle{color:#9aa1b5}
+    .link{color:#cbb4ff;text-decoration:none;border-bottom:1px dashed #5a4fb2}
+    .spacer{flex:1}
+    .hidden{display:none !important}
+    @media (max-width:700px){
+      .controls{grid-template-columns: 1fr; align-items:stretch}
+      .field{justify-content:stretch}
+    }
+  </style>
+
+  <!-- tmi.js for Twitch chat -->
+  <script src="https://unpkg.com/tmi.js@1.8.5/dist/tmi.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">TW</div>
+      <div>
+        <div style="font-size:15px">Twitch Chat Viewer</div>
+        <div style="font-size:12px; color:var(--muted)">Login and watch chat in real time</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="loginBtn">Login with Twitch</button>
+      <button id="logoutBtn" class="secondary hidden">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="status">
+        <div id="connDot" class="dot"></div>
+        <div id="connText">Disconnected</div>
+        <div class="spacer"></div>
+        <div id="selfInfo" class="subtle">Not logged in</div>
+      </div>
+      <div class="controls">
+        <div class="identity">
+          <div id="avatar" class="avatar">?</div>
+          <div class="userline">
+            <b id="displayName">Guest</b>
+            <small id="loginName">@anonymous</small>
+          </div>
+        </div>
+        <div class="field">
+          <label for="channel" class="subtle">Channel</label>
+          <input id="channel" type="text" placeholder="e.g. twitch" />
+          <button id="joinBtn">Join</button>
+        </div>
+        <div class="field">
+          <button id="clearBtn" class="secondary">Clear</button>
+        </div>
+      </div>
+      <div class="chat">
+        <div id="messages" class="messages"></div>
+        <div class="info">Tip: Login first, enter a channel name, then press Join.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ========= Configuration (set these) =========
+    const TWITCH_CLIENT_ID = 'YOUR_TWITCH_CLIENT_ID';
+    const REDIRECT_URI = 'YOUR_REDIRECT_URI'; // must match your Twitch app config, e.g. http://localhost:5500/
+
+    // ========= OAuth helpers =========
+    const OAUTH_STATE_KEY = 'tw_state';
+    const TOKEN_KEY = 'tw_access_token';
+    const USER_KEY = 'tw_user';
+
+    function buildAuthUrl() {
+      const scopes = [
+        // no special scopes required to read chat via tmi as anonymous; for identity we validate token only
+        // Add scopes if you need more user data
+      ];
+      const state = crypto.getRandomValues(new Uint8Array(16)).reduce((s,b)=>s+('0'+b.toString(16)).slice(-2),'');
+      localStorage.setItem(OAUTH_STATE_KEY, state);
+
+      const params = new URLSearchParams({
+        client_id: TWITCH_CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        response_type: 'token',
+        scope: scopes.join(' '),
+        force_verify: 'false',
+        state
+      });
+      return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
+    }
+
+    function parseHashFragment() {
+      if (!location.hash.startsWith('#')) return null;
+      const params = new URLSearchParams(location.hash.slice(1));
+      if (!params.has('access_token')) return null;
+      return {
+        access_token: params.get('access_token'),
+        scope: (params.get('scope') || '').split(' ').filter(Boolean),
+        state: params.get('state'),
+        token_type: params.get('token_type')
+      };
+    }
+
+    async function validateToken(token) {
+      const res = await fetch('https://id.twitch.tv/oauth2/validate', {
+        headers: { 'Authorization': 'OAuth ' + token }
+      });
+      if (!res.ok) throw new Error('Token validate failed');
+      return res.json(); // {client_id, login, user_id, expires_in, scopes}
+    }
+
+    function saveToken(token, user) {
+      localStorage.setItem(TOKEN_KEY, token);
+      if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+    }
+    function getSavedToken() {
+      return localStorage.getItem(TOKEN_KEY);
+    }
+    function getSavedUser() {
+      const s = localStorage.getItem(USER_KEY);
+      try { return s ? JSON.parse(s) : null } catch { return null }
+    }
+    function clearAuth() {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(OAUTH_STATE_KEY);
+    }
+
+    // ========= UI refs =========
+    const $ = sel => document.querySelector(sel);
+    const loginBtn = $('#loginBtn');
+    const logoutBtn = $('#logoutBtn');
+    const displayNameEl = $('#displayName');
+    const loginNameEl = $('#loginName');
+    const avatarEl = $('#avatar');
+    const messagesEl = $('#messages');
+    const channelInput = $('#channel');
+    const joinBtn = $('#joinBtn');
+    const clearBtn = $('#clearBtn');
+    const connDot = $('#connDot');
+    const connText = $('#connText');
+    const selfInfo = $('#selfInfo');
+
+    // ========= Chat (tmi.js) =========
+    let client = null;
+    let currentChannel = null;
+    let currentColorMap = new Map(); // user => color
+
+    function setConnectionStatus(connected, text) {
+      connDot.classList.toggle('on', connected);
+      connText.textContent = text || (connected ? 'Connected' : 'Disconnected');
+    }
+
+    function setLoggedIn(user) {
+      if (user) {
+        loginBtn.classList.add('hidden');
+        logoutBtn.classList.remove('hidden');
+        displayNameEl.textContent = user.display_name || user.login || 'User';
+        loginNameEl.textContent = '@' + (user.login || 'user');
+        avatarEl.textContent = (user.display_name || user.login || 'U').slice(0,1).toUpperCase();
+        selfInfo.textContent = `Logged in as ${user.login}`;
+      } else {
+        loginBtn.classList.remove('hidden');
+        logoutBtn.classList.add('hidden');
+        displayNameEl.textContent = 'Guest';
+        loginNameEl.textContent = '@anonymous';
+        avatarEl.textContent = '?';
+        selfInfo.textContent = 'Not logged in';
+      }
+    }
+
+    function renderMessage({timestamp, username, color, badges, text}) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.style.color = color || '#c9cdfc';
+      name.textContent = username;
+      const time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      meta.appendChild(name);
+      if (badges && badges.length) {
+        for (const b of badges) {
+          const el = document.createElement('span');
+          el.className = 'badge';
+          el.textContent = b;
+          meta.appendChild(el);
+        }
+      }
+      meta.appendChild(time);
+
+      const body = document.createElement('div');
+      body.className = 'text';
+      body.textContent = text;
+
+      wrap.appendChild(meta);
+      wrap.appendChild(body);
+      messagesEl.appendChild(wrap);
+
+      // Auto-scroll
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function guessColor(username) {
+      if (currentColorMap.has(username)) return currentColorMap.get(username);
+      // deterministic pastel-ish
+      let hash = 0;
+      for (let i=0;i<username.length;i++) hash = (hash*31 + username.charCodeAt(i)) | 0;
+      const hue = Math.abs(hash) % 360;
+      const c = `hsl(${hue} 70% 70%)`;
+      currentColorMap.set(username, c);
+      return c;
+    }
+
+    function resetChat() {
+      messagesEl.innerHTML = '';
+      currentColorMap.clear();
+    }
+
+    function parseBadges(tags) {
+      const badges = tags.badges || {};
+      const list = [];
+      if (badges.broadcaster) list.push('Broadcaster');
+      if (badges.moderator) list.push('Mod');
+      if (badges.vip) list.push('VIP');
+      if (badges.subscriber) list.push('Sub');
+      if (badges.turbo) list.push('Turbo');
+      return list;
+    }
+
+    async function connectChat(channel, token, login) {
+      if (client) {
+        try { await client.disconnect(); } catch {}
+        client = null;
+      }
+      setConnectionStatus(false, 'Connecting...');
+      // identity can be omitted to connect anonymously; when provided, use oauth token and login
+      const opts = {
+        connection: { reconnect: true, secure: true },
+        channels: [channel]
+      };
+      if (token && login) {
+        opts.identity = { username: login, password: 'oauth:' + token };
+      }
+      client = new tmi.Client(opts);
+
+      client.on('message', (ch, tags, message, self) => {
+        // only channel being watched
+        if (ch.replace('#','').toLowerCase() !== channel.toLowerCase()) return;
+        const username = tags['display-name'] || tags.username || 'user';
+        const color = tags.color || guessColor(username);
+        renderMessage({
+          timestamp: Date.now(),
+          username,
+          color,
+          badges: parseBadges(tags),
+          text: message
+        });
+      });
+
+      client.on('connected', () => {
+        setConnectionStatus(true, `Connected to #${channel}`);
+      });
+
+      client.on('disconnected', () => {
+        setConnectionStatus(false, `Disconnected from #${channel}`);
+      });
+
+      try {
+        await client.connect();
+        currentChannel = channel;
+      } catch (e) {
+        setConnectionStatus(false, 'Failed to connect');
+        renderMessage({
+          timestamp: Date.now(),
+          username: 'System',
+          color: '#ff9aa5',
+          badges: ['Error'],
+          text: 'Failed to connect: ' + (e?.message || e)
+        });
+      }
+    }
+
+    // ========= Event Wiring =========
+    loginBtn.addEventListener('click', () => {
+      if (!TWITCH_CLIENT_ID || TWITCH_CLIENT_ID === 'YOUR_TWITCH_CLIENT_ID') {
+        alert('Please set TWITCH_CLIENT_ID in the code.');
+        return;
+      }
+      if (!REDIRECT_URI || REDIRECT_URI === 'YOUR_REDIRECT_URI') {
+        alert('Please set REDIRECT_URI in the code (must match Twitch app).');
+        return;
+      }
+      location.href = buildAuthUrl();
+    });
+
+    logoutBtn.addEventListener('click', async () => {
+      clearAuth();
+      setLoggedIn(null);
+      resetChat();
+      if (client) { try { await client.disconnect(); } catch {} client = null; }
+      setConnectionStatus(false, 'Disconnected');
+    });
+
+    joinBtn.addEventListener('click', async () => {
+      const channel = (channelInput.value || '').trim().replace(/^#/, '');
+      if (!channel) {
+        alert('Enter a channel name.');
+        return;
+      }
+      resetChat();
+      const token = getSavedToken();
+      const user = getSavedUser();
+      await connectChat(channel, token, user?.login);
+    });
+
+    clearBtn.addEventListener('click', resetChat);
+
+    channelInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') joinBtn.click();
+    });
+
+    // ========= Init: handle OAuth return, restore session =========
+    (async function init() {
+      // Handle OAuth redirect hash
+      const parsed = parseHashFragment();
+      if (parsed?.access_token) {
+        try {
+          const expected = localStorage.getItem(OAUTH_STATE_KEY);
+          if (expected && expected !== parsed.state) throw new Error('State mismatch');
+          const v = await validateToken(parsed.access_token);
+          // v.login, v.user_id
+          saveToken(parsed.access_token, { login: v.login, user_id: v.user_id, display_name: v.login });
+          // Clean hash
+          history.replaceState(null, '', location.pathname + location.search);
+        } catch (e) {
+          console.error(e);
+          alert('Login failed: ' + (e?.message || e));
+          clearAuth();
+        }
+      }
+
+      // Restore session
+      const token = getSavedToken();
+      const user = getSavedUser();
+      setLoggedIn(user);
+
+      // If query channel provided ?channel=foo, auto-join
+      const url = new URL(location.href);
+      const qChannel = (url.searchParams.get('channel') || '').trim();
+      if (qChannel) {
+        channelInput.value = qChannel;
+        if (qChannel) {
+          await connectChat(qChannel, token, user?.login);
+        }
+      }
+    })();
+  </script>
+</body>
+</html>
