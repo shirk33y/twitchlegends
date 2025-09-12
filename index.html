@@ -212,7 +212,7 @@
       </div>
       <div class="chat">
         <div id="messages" class="messages"></div>
-        <div class="info">Tip: Login first, enter a channel name, then press Join.</div>
+        <div class="info">Tip: Enter a channel name, then press Join. Login is optional.</div>
       </div>
     </section>
   </main>
@@ -391,7 +391,7 @@
       return list;
     }
 
-    async function connectChat(channel, token, login, triedAnon = false) {
+    async function connectChat(channel) {
       if (client) {
         try { await client.disconnect(); } catch {}
         client = null;
@@ -402,28 +402,7 @@
         connection: { reconnect: true, secure: true },
         channels: [channel]
       };
-      if (token && login) {
-        opts.identity = { username: login, password: 'oauth:' + token };
-      }
       client = new tmi.Client(opts);
-
-      // If IRC reports login problems, fallback to anonymous
-      client.on('notice', async (ch, msgid, message) => {
-        const msg = (message || '').toLowerCase();
-        if (msg.includes('login unsuccessful') && token && !triedAnon) {
-          try { await client.disconnect(); } catch {}
-          client = null;
-          renderMessage({
-            timestamp: Date.now(),
-            username: 'System',
-            color: '#ffd166',
-            badges: ['Info'],
-            text: 'Authenticated login failed. Reconnecting anonymously…'
-          });
-          setConnectionStatus(false, 'Retrying anonymously…');
-          await connectChat(channel, null, null, true);
-        }
-      });
 
       client.on('message', (ch, tags, message, self) => {
         // only channel being watched
@@ -451,29 +430,14 @@
         await client.connect();
         currentChannel = channel;
       } catch (e) {
-        if (token && !triedAnon) {
-          // Fallback to anonymous if auth connect fails
-          try { await client.disconnect(); } catch {}
-          client = null;
-          renderMessage({
-            timestamp: Date.now(),
-            username: 'System',
-            color: '#ffd166',
-            badges: ['Info'],
-            text: 'Authenticated connection failed. Reconnecting anonymously…'
-          });
-          setConnectionStatus(false, 'Retrying anonymously…');
-          await connectChat(channel, null, null, true);
-        } else {
-          setConnectionStatus(false, 'Failed to connect');
-          renderMessage({
-            timestamp: Date.now(),
-            username: 'System',
-            color: '#ff9aa5',
-            badges: ['Error'],
-            text: 'Failed to connect: ' + (e?.message || e)
-          });
-        }
+        setConnectionStatus(false, 'Failed to connect');
+        renderMessage({
+          timestamp: Date.now(),
+          username: 'System',
+          color: '#ff9aa5',
+          badges: ['Error'],
+          text: 'Failed to connect: ' + (e?.message || e)
+        });
       }
     }
 
@@ -505,9 +469,7 @@
         return;
       }
       resetChat();
-      const token = getSavedToken();
-      const user = getSavedUser();
-      await connectChat(channel, token, user?.login);
+      await connectChat(channel);
     });
 
     clearBtn.addEventListener('click', resetChat);
@@ -547,7 +509,7 @@
       if (qChannel) {
         channelInput.value = qChannel;
         if (qChannel) {
-          await connectChat(qChannel, token, user?.login);
+          await connectChat(qChannel);
         }
       }
     })();
