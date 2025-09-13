@@ -125,8 +125,8 @@
       position:relative; /* allow overlay resume button */
     }
     .messages{
-      overflow:auto;padding:16px 12px 12px;
-      display:flex;flex-direction:column;gap:2px; /* tighter spacing */
+      overflow:auto;padding:8px 12px 8px;
+      display:block; /* let VirtualList control internals */
       scroll-behavior:smooth;
       min-height:0; /* critical for flex/grid children to allow scrolling */
       max-height:100%;
@@ -149,7 +149,7 @@
     .msg:hover{background:transparent}
     .meta{
       display:flex;gap:8px;align-items:center;justify-content:space-between;color:#c9cdfc;
-      font-size:12px;opacity:.9;
+      font-size:14px;opacity:.95;line-height:24px; /* match VirtualList rowHeight */
     }
     .meta-left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
     .meta-right{margin-left:12px;flex:0 0 auto}
@@ -254,8 +254,8 @@
       </div>
     </section>
   </main>
-
-  <script type="module">
+  <div id="app"></div>
+  <script type="module/disabled">
     import tmi from 'https://esm.sh/tmi.js@1.8.5';
     // Expose globally if any external code expects window.tmi
     window.tmi = tmi;
@@ -730,6 +730,223 @@
         await connectChat(targetChannel, token, user?.login);
       }
     })();
+  </script>
+  <script type="module">
+    import { h, render } from 'https://esm.sh/preact@10.19.6';
+    import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.19.6/hooks';
+    import htm from 'https://esm.sh/htm@3.1.1';
+    import VirtualList from 'https://esm.sh/preact-virtual-list@3.0.1?external=preact';
+    import tmi from 'https://esm.sh/tmi.js@1.8.5';
+    const html = htm.bind(h);
+
+    // Config
+    const TWITCH_CLIENT_ID = 'lihxdhjxpzachp1h2z4nerzxszbgar';
+    const REDIRECT_URI = 'https://shirk33y.github.io/twitchlegends/';
+    const OAUTH_STATE_KEY = 'tw_state';
+    const TOKEN_KEY = 'tw_access_token';
+    const USER_KEY = 'tw_user';
+
+    // OAuth helpers
+    const buildAuthUrl = () => {
+      const scopes = ['chat:read', 'chat:edit'];
+      const state = crypto.getRandomValues(new Uint8Array(16)).reduce((s,b)=>s+('0'+b.toString(16)).slice(-2),'');
+      localStorage.setItem(OAUTH_STATE_KEY, state);
+      const params = new URLSearchParams({ client_id: TWITCH_CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: 'token', scope: scopes.join(' '), force_verify: 'true', state });
+      return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
+    };
+    const parseOAuthHash = () => {
+      if (!location.hash.startsWith('#')) return null;
+      const p = new URLSearchParams(location.hash.slice(1));
+      if (!p.get('access_token')) return null;
+      return { access_token: p.get('access_token'), state: p.get('state') };
+    };
+    const validateToken = async (token) => {
+      const r = await fetch('https://id.twitch.tv/oauth2/validate', { headers: { Authorization: 'OAuth ' + token } });
+      if (!r.ok) throw new Error('validate failed');
+      return r.json(); // { login, user_id, scopes }
+    };
+
+    // URL query helpers
+    const getChannelFromQuery = () => new URL(location.href).searchParams.get('channel')?.replace(/^#/, '')?.trim() || '';
+    const setChannelInQuery = (channel) => { const url = new URL(location.href); channel ? url.searchParams.set('channel', channel) : url.searchParams.delete('channel'); history.replaceState(null, '', url.toString()); };
+
+    // UI bits
+    const Dot = ({ on }) => html`<div class=${'dot'+(on?' on':'')}></div>`;
+
+    const MessageRow = (row) => html`
+      <div class="msg">
+        <div class="meta">
+          <div class="meta-left">
+            <span class="name" style=${{ color: row.color || '#c9cdfc' }}>${row.username}</span>${': '}<span class="text">${row.text}</span>
+          </div>
+          <div class="meta-right">${(row.badges||[]).map(b => html`<span class="badge">${b}</span>`)}</div>
+        </div>
+      </div>
+    `;
+
+    const App = () => {
+      const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || '');
+      const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem(USER_KEY)||'null'); } catch { return null; } });
+      const [channel, setChannel] = useState(getChannelFromQuery());
+      const [channelInput, setChannelInput] = useState(getChannelFromQuery());
+      const [connected, setConnected] = useState(false);
+      const [connecting, setConnecting] = useState(false);
+      const [messages, setMessages] = useState([]);
+      const [compose, setCompose] = useState('');
+      const clientRef = useRef(null);
+      const listRef = useRef(null);
+      const [autoScroll, setAutoScroll] = useState(true);
+
+      // Hide legacy static DOM if present
+      useEffect(() => { document.querySelectorAll('body>header, body>main').forEach(el => el.style.display='none'); }, []);
+
+      // OAuth return
+      useEffect(() => {
+        const parsed = parseOAuthHash();
+        (async () => {
+          if (parsed?.access_token) {
+            try {
+              const expected = localStorage.getItem(OAUTH_STATE_KEY);
+              if (expected && expected !== parsed.state) throw new Error('state mismatch');
+              const v = await validateToken(parsed.access_token);
+              localStorage.setItem(TOKEN_KEY, parsed.access_token);
+              localStorage.setItem(USER_KEY, JSON.stringify({ login: v.login, user_id: v.user_id, display_name: v.login }));
+              setToken(parsed.access_token);
+              setUser({ login: v.login, user_id: v.user_id, display_name: v.login });
+            } catch (e) { console.error(e); alert('Login failed'); }
+            finally { history.replaceState(null, '', location.pathname + location.search); }
+          }
+        })();
+      }, []);
+
+      // React to query changes (back/forward)
+      useEffect(() => {
+        const onPop = () => { const c = getChannelFromQuery(); setChannel(c); setChannelInput(c); setMessages([]); };
+        window.addEventListener('popstate', onPop);
+        return () => window.removeEventListener('popstate', onPop);
+      }, []);
+
+      // Connect when channel or identity changes
+      useEffect(() => {
+        if (!channel) return;
+        let cancelled = false;
+        (async () => {
+          setConnecting(true);
+          if (clientRef.current) { try { await clientRef.current.disconnect(); } catch {} clientRef.current = null; }
+          const opts = { connection: { reconnect: true, secure: true }, channels: [channel] };
+          if (token && user?.login) opts.identity = { username: user.login, password: 'oauth:' + token };
+          const client = new tmi.Client(opts);
+          clientRef.current = client;
+          client.on('connected', () => { if (!cancelled) { setConnected(true); setConnecting(false); } });
+          client.on('disconnected', () => { if (!cancelled) setConnected(false); });
+          client.on('message', (ch, tags, msg) => {
+            if (cancelled) return;
+            if (ch.replace('#','').toLowerCase() !== channel.toLowerCase()) return;
+            const username = tags['display-name'] || tags.username || 'user';
+            const color = tags.color || guessColor(username);
+            const badges = parseBadges(tags);
+            setMessages(m => [...m, { username, color, badges, text: msg }]);
+          });
+          try { await client.connect(); } catch (e) { console.error(e); setConnecting(false); setConnected(false); }
+        })();
+        return () => { cancelled = true; };
+      }, [channel, token, user?.login]);
+
+      // Autoscroll management
+      const atBottom = useCallback(() => {
+        const el = listRef.current && (listRef.current.base || listRef.current);
+        if (!el) return true;
+        return (el.scrollHeight - el.clientHeight - el.scrollTop) <= 24;
+      }, []);
+      useEffect(() => {
+        const el = listRef.current && (listRef.current.base || listRef.current); if (!el) return;
+        const onScroll = () => setAutoScroll(atBottom());
+        el.addEventListener('scroll', onScroll, { passive: true });
+        return () => el.removeEventListener('scroll', onScroll);
+      }, [atBottom]);
+      useEffect(() => {
+        if (autoScroll) { const el = listRef.current && (listRef.current.base || listRef.current); if (el) el.scrollTop = el.scrollHeight; }
+      }, [messages.length, autoScroll]);
+
+      // Actions
+      const onLogin = () => { if (!TWITCH_CLIENT_ID || !REDIRECT_URI) return alert('Missing Twitch config'); location.href = buildAuthUrl(); };
+      const onLogout = async () => { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); setToken(''); setUser(null); try { await clientRef.current?.disconnect(); } catch {}; setConnected(false); };
+      const onJoin = () => { const c = (channelInput||'').trim().replace(/^#/, ''); if (!c) return; setChannel(c); setChannelInQuery(c); setMessages([]); };
+      const canSend = !!token && !!user?.login && connected && !!channel;
+      const onSend = async (text) => {
+        const t = (text||'').trim(); if (!t) return; if (!canSend) return alert('Login and connect first');
+        try { await clientRef.current?.say('#'+channel, t); setMessages(m => [...m, { username: user.display_name||user.login, color:'#cbb4ff', badges:['You'], text: t }]); } catch (e) { console.error(e); }
+      };
+
+      return html`
+        <${HeaderComp} loggedIn=${!!user} onLogin=${onLogin} onLogout=${onLogout} user=${user} connection=${connected} />
+        <main class="container">
+          <section class="panel">
+            <div class="status">
+              <${Dot} on=${connected} />
+              <div>${connecting ? 'Connecting…' : (connected ? `Connected to #${channel||''}` : 'Disconnected')}</div>
+              <div class="spacer"></div>
+              <div class="subtle">${user ? `@${user.login}` : 'Not logged in'}</div>
+            </div>
+            <div class="controls">
+              <div class="identity">
+                <div class="avatar">${(user?.display_name||user?.login||'?').slice(0,1).toUpperCase()}</div>
+                <div class="userline">
+                  <b id="displayName">${user?.display_name||'Guest'}</b>
+                  <small id="loginName">${user?('@'+user.login):'@anonymous'}</small>
+                </div>
+              </div>
+              <div class="field">
+                <label class="subtle" for="channel">Channel</label>
+                <input id="channel" value=${channelInput} onInput=${e=>setChannelInput(e.currentTarget.value)} placeholder="e.g. twitch" />
+                <button onClick=${onJoin}>Join</button>
+              </div>
+              <div class="field">
+                <button class="secondary" onClick=${()=>setMessages([])}>Clear</button>
+              </div>
+            </div>
+            <div class="chat">
+              <${VirtualList}
+                ref=${listRef}
+                class="messages"
+                style=${{ height: '100%' }}
+                data=${messages}
+                rowHeight=${24}
+                overscanCount=${10}
+                renderRow=${row => html`<${MessageRow} ...${row} />`}
+              />
+              <div class="composer">
+                <input
+                  value=${compose}
+                  onInput=${e=>setCompose(e.currentTarget.value)}
+                  onKeyDown=${e=>{ if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); onSend(compose); setCompose(''); } }}
+                  placeholder=${canSend? 'Type a message...' : 'Login with Twitch and join a channel to chat'}
+                  disabled=${!canSend}
+                />
+                <button onClick=${()=>{ onSend(compose); setCompose(''); }} disabled=${!canSend}>Send</button>
+              </div>
+            </div>
+          </section>
+        </main>
+      `;
+    };
+
+    const HeaderComp = ({ loggedIn, onLogin, onLogout, user }) => html`
+      <header>
+        <div class="brand">
+          <div class="logo">TW</div>
+          <div>
+            <div style="font-size:15px">Twitch Chat Viewer</div>
+            <div style="font-size:12px; color:var(--muted)">${loggedIn ? `Logged in as @${user?.login}` : 'Login and watch chat in real time'}</div>
+          </div>
+        </div>
+        <div class="actions">
+          ${!loggedIn ? html`<button onClick=${onLogin}>Login with Twitch</button>` : html`<button class="secondary" onClick=${onLogout}>Logout</button>`}
+        </div>
+      </header>
+    `;
+
+    render(html`<${App}/>`, document.getElementById('app'));
   </script>
 </body>
 </html>
