@@ -74,6 +74,7 @@
       margin:0 auto;
       width:100%;
       min-height:0; /* allow inner grids to scroll */
+      overflow:hidden; /* prevent growth, let inner scroll containers handle overflow */
     }
 
     .panel{
@@ -85,6 +86,7 @@
       display:grid;
       grid-template-rows: auto auto minmax(0, 1fr); /* status, controls, chat */
       min-height:0; /* allow chat to shrink/scroll */
+      overflow:hidden; /* keep internal scroll only */
     }
 
     .controls{
@@ -119,6 +121,8 @@
 
     .chat{
       display:grid;grid-template-rows: minmax(0, 1fr) auto;min-height:0; /* remove growth, enable inner scroll */
+      overflow:hidden; /* confine scroll to messages */
+      position:relative; /* allow overlay resume button */
     }
     .messages{
       overflow:auto;padding:16px 12px 12px;
@@ -130,12 +134,14 @@
     .msg{
       display:flex;
       flex-direction:column;
-      gap:6px;
-      padding:10px 12px;
-      background:#121632cc;border:1px solid #2b3154;border-radius:12px;
-      transition:.2s background;
+      gap:2px;
+      padding:4px 2px;
+      background:transparent;
+      border:none;
+      border-radius:0;
+      transition:none;
     }
-    .msg:hover{background:#171b3acc}
+    .msg:hover{background:transparent}
     .meta{
       display:flex;gap:8px;align-items:center;justify-content:space-between;color:#c9cdfc;
       font-size:12px;opacity:.9;
@@ -145,15 +151,30 @@
     .badge{
       display:inline-flex;align-items:center;gap:4px;font-size:11px;
       background:#2a2f5a;border:1px solid #3a3f6a;color:#e1e3ff;
-      border-radius:999px;padding:2px 8px;
+      border-radius:999px;padding:0 6px;
     }
     .name{font-weight:700}
     .time{color:#9aa1b5; white-space:nowrap}
-    .text{white-space:pre-wrap;word-break:break-word;color:#eef0ff}
+    .text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eef0ff}
 
     .composer{
       display:flex;gap:10px;padding:12px;border-top:1px solid #2b3154;background:#121632aa;border-radius:0 0 var(--radius) var(--radius)
     }
+    .resume-pill{
+      position:absolute;left:50%;transform:translateX(-50%);
+      bottom:58px; /* above composer */
+      padding:6px 12px;
+      font-size:12px;
+      background:#0b0e2ccc;
+      color:var(--text);
+      border:1px solid #3a3f6a;
+      border-radius:999px;
+      box-shadow: var(--shadow);
+      opacity:.9;
+      transition: opacity .2s ease;
+      z-index: 5;
+    }
+    .resume-pill:hover{ opacity:1 }
     .info{
       margin-top:-2px;color:var(--muted);font-size:12px;text-align:right;padding:0 2px 6px;
     }
@@ -176,8 +197,6 @@
     }
   </style>
 
-  <!-- tmi.js via ESM to avoid MIME nosniff issues -->
-  <!-- Loaded via import in the module script below -->
 </head>
 <body>
   <header>
@@ -221,6 +240,7 @@
       </div>
       <div class="chat">
         <div id="messages" class="messages"></div>
+        <button id="resumeBtn" class="resume-pill hidden">Resume</button>
         <div id="composer" class="composer">
           <input id="inputMsg" type="text" placeholder="Type a message..." />
           <button id="sendBtn">Send</button>
@@ -316,6 +336,7 @@
     const composer = $('#composer');
     const inputMsg = $('#inputMsg');
     const sendBtn = $('#sendBtn');
+    const resumeBtn = $('#resumeBtn');
 
     // ========= Chat (tmi.js) =========
     let client = null;
@@ -330,6 +351,7 @@
       connDot.classList.toggle('on', connected);
       connText.textContent = text || (connected ? 'Connected' : 'Disconnected');
       updateComposerState();
+      updateResumeUI();
     }
 
     function setLoggedIn(user) {
@@ -376,6 +398,13 @@
         }
       }
 
+      // Separator and one-line message text
+      metaLeft.appendChild(document.createTextNode(': '));
+      const textSpan = document.createElement('span');
+      textSpan.className = 'text';
+      textSpan.textContent = text;
+      metaLeft.appendChild(textSpan);
+
       const time = document.createElement('span');
       time.className = 'time';
       time.textContent = new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
@@ -384,17 +413,14 @@
       meta.appendChild(metaLeft);
       meta.appendChild(metaRight);
 
-      const body = document.createElement('div');
-      body.className = 'text';
-      body.textContent = text;
-
       wrap.appendChild(meta);
-      wrap.appendChild(body);
       messagesEl.appendChild(wrap);
 
       // Auto-scroll only if user is near bottom
       if (autoScroll) {
         messagesEl.scrollTop = messagesEl.scrollHeight;
+      } else {
+        updateResumeUI();
       }
     }
 
@@ -413,6 +439,7 @@
       messagesEl.innerHTML = '';
       currentColorMap.clear();
       autoScroll = true;
+      updateResumeUI();
     }
 
     function atBottom() {
@@ -449,6 +476,11 @@
       } else {
         inputMsg.placeholder = 'Type a message...';
       }
+    }
+
+    function updateResumeUI() {
+      if (!resumeBtn) return;
+      resumeBtn.classList.toggle('hidden', autoScroll);
     }
 
     async function sendMessage() {
@@ -579,8 +611,33 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
 
+    // Track user intent to scroll (to avoid accidental pauses from programmatic scrolls)
+    let userScrollIntent = false;
+    let userIntentTimer = null;
+    function markUserIntent() {
+      userScrollIntent = true;
+      if (userIntentTimer) clearTimeout(userIntentTimer);
+      userIntentTimer = setTimeout(() => { userScrollIntent = false; }, 800);
+    }
+    messagesEl.addEventListener('wheel', markUserIntent, { passive: true });
+    messagesEl.addEventListener('touchstart', markUserIntent, { passive: true });
+    messagesEl.addEventListener('mousedown', markUserIntent);
+
     messagesEl.addEventListener('scroll', () => {
-      autoScroll = atBottom();
+      // Pause autoscroll only when the user is actively scrolling up
+      if (userScrollIntent && autoScroll && !atBottom()) {
+        autoScroll = false;
+        updateResumeUI();
+      } else if (!autoScroll) {
+        // Stay paused until user clicks Resume; keep hint visible
+        updateResumeUI();
+      }
+    });
+
+    resumeBtn.addEventListener('click', () => {
+      autoScroll = true;
+      updateResumeUI();
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     });
 
     // ========= Init: handle OAuth return, restore session =========
@@ -608,6 +665,7 @@
       const user = getSavedUser();
       setLoggedIn(user);
       updateComposerState();
+      updateResumeUI();
 
       // If query channel provided ?channel=foo, auto-join
       const url = new URL(location.href);
