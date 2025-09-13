@@ -68,11 +68,12 @@
       flex:1;
       padding:0 20px 20px;
       display:grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: 1fr; /* single row to let the panel fill */
       gap:14px;
       max-width:1100px;
       margin:0 auto;
       width:100%;
+      min-height:0; /* allow inner grids to scroll */
     }
 
     .panel{
@@ -80,6 +81,10 @@
       border:1px solid #2b3154;
       border-radius: var(--radius);
       box-shadow: var(--shadow);
+      height:100%;
+      display:grid;
+      grid-template-rows: auto auto minmax(0, 1fr); /* status, controls, chat */
+      min-height:0; /* allow chat to shrink/scroll */
     }
 
     .controls{
@@ -113,12 +118,14 @@
     input[type="text"]:focus{border-color:#5160ff}
 
     .chat{
-      display:grid;grid-template-rows: 1fr auto;min-height:60vh;
+      display:grid;grid-template-rows: minmax(0, 1fr) auto;min-height:0; /* remove growth, enable inner scroll */
     }
     .messages{
       overflow:auto;padding:16px 12px 12px;
       display:flex;flex-direction:column;gap:8px;
       scroll-behavior:smooth;
+      min-height:0; /* critical for flex/grid children to allow scrolling */
+      max-height:100%;
     }
     .msg{
       display:flex;
