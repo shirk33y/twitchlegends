@@ -17,7 +17,7 @@ set -euo pipefail
 #   - gh (GitHub CLI) authenticated for this repo
 #   - git
 
-WORKFLOW_FILE="${WORKFLOW_FILE:-.github/workflows/pages.yml}"
+WORKFLOW_FILE="${WORKFLOW_FILE:-pages.yml}"
 REMOTE="${REMOTE:-origin}"
 BRANCH="${BRANCH:-}"
 
@@ -46,9 +46,15 @@ else
   fi
 fi
 
+WF_FILTER="$WORKFLOW_FILE"
+# Always pass only the filename to gh as a workflow filter
+if [[ "$WF_FILTER" == */* ]]; then
+  WF_FILTER="${WF_FILTER##*/}"
+fi
+
 echo "Repo: $REPO_SLUG"
 echo "Branch: $BRANCH"
-echo "Workflow filter: $WORKFLOW_FILE"
+echo "Workflow filter: $WF_FILTER"
 
 # Optionally commit changes
 COMMIT_MSG="${1:-}"
@@ -73,19 +79,19 @@ SHA=$(git rev-parse HEAD)
 echo "HEAD after push: $SHA"
 
 # Find the workflow run for exactly this commit SHA.
-echo "Waiting for workflow run of '$WORKFLOW_FILE' on commit $SHA ..."
+echo "Waiting for workflow run of '$WF_FILTER' on commit $SHA ..."
 RUN_ID=""
 ATTEMPTS=0
 MAX_ATTEMPTS=150  # ~5 minutes
 SLEEP=2
 
 while [[ -z "$RUN_ID" && $ATTEMPTS -lt $MAX_ATTEMPTS ]]; do
-  # Filter by workflow file/name and headSha so we pick the correct run
+  # Filter by workflow file/name and exact headSha; if multiple runs exist
+  # for the same SHA, pick the most recently created run deterministically.
   RUN_ID=$(gh run list -R "$REPO_SLUG" \
-            --workflow "$WORKFLOW_FILE" \
+            --workflow "$WF_FILTER" \
             --json databaseId,headSha,createdAt \
-            -q ".[] | select(.headSha==\"$SHA\") | .databaseId" \
-            | head -n 1 || true)
+            -q ". | map(select(.headSha==\"$SHA\")) | sort_by(.createdAt) | last | .databaseId" 2>/dev/null || true)
   if [[ -n "$RUN_ID" ]]; then
     break
   fi

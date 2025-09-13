@@ -121,25 +121,27 @@
       scroll-behavior:smooth;
     }
     .msg{
-      display:grid;
-      grid-template-columns: auto 1fr;
-      gap:10px;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
       padding:10px 12px;
       background:#121632cc;border:1px solid #2b3154;border-radius:12px;
       transition:.2s background;
     }
     .msg:hover{background:#171b3acc}
     .meta{
-      display:flex;gap:8px;align-items:center;color:#c9cdfc;
+      display:flex;gap:8px;align-items:center;justify-content:space-between;color:#c9cdfc;
       font-size:12px;opacity:.9;
     }
+    .meta-left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+    .meta-right{margin-left:12px;flex:0 0 auto}
     .badge{
       display:inline-flex;align-items:center;gap:4px;font-size:11px;
       background:#2a2f5a;border:1px solid #3a3f6a;color:#e1e3ff;
       border-radius:999px;padding:2px 8px;
     }
     .name{font-weight:700}
-    .time{color:#9aa1b5}
+    .time{color:#9aa1b5; white-space:nowrap}
     .text{white-space:pre-wrap;word-break:break-word;color:#eef0ff}
 
     .composer{
@@ -212,7 +214,10 @@
       </div>
       <div class="chat">
         <div id="messages" class="messages"></div>
-        <div class="info">Tip: Enter a channel name, then press Join. Login is optional.</div>
+        <div id="composer" class="composer">
+          <input id="inputMsg" type="text" placeholder="Type a message..." />
+          <button id="sendBtn">Send</button>
+        </div>
       </div>
     </section>
   </main>
@@ -232,8 +237,9 @@
 
     function buildAuthUrl() {
       const scopes = [
-        // Minimal scope to allow authenticated IRC connection
-        'chat:read'
+        // Scopes needed: read chat and send messages
+        'chat:read',
+        'chat:edit'
       ];
       const state = crypto.getRandomValues(new Uint8Array(16)).reduce((s,b)=>s+('0'+b.toString(16)).slice(-2),'');
       localStorage.setItem(OAUTH_STATE_KEY, state);
@@ -300,15 +306,23 @@
     const connDot = $('#connDot');
     const connText = $('#connText');
     const selfInfo = $('#selfInfo');
+    const composer = $('#composer');
+    const inputMsg = $('#inputMsg');
+    const sendBtn = $('#sendBtn');
 
     // ========= Chat (tmi.js) =========
     let client = null;
     let currentChannel = null;
     let currentColorMap = new Map(); // user => color
+    let isConnected = false;
+    let autoScroll = true;
+    const SCROLL_BOTTOM_THRESHOLD = 24;
 
     function setConnectionStatus(connected, text) {
+      isConnected = connected;
       connDot.classList.toggle('on', connected);
       connText.textContent = text || (connected ? 'Connected' : 'Disconnected');
+      updateComposerState();
     }
 
     function setLoggedIn(user) {
@@ -332,25 +346,36 @@
     function renderMessage({timestamp, username, color, badges, text}) {
       const wrap = document.createElement('div');
       wrap.className = 'msg';
+
       const meta = document.createElement('div');
       meta.className = 'meta';
+      const metaLeft = document.createElement('div');
+      metaLeft.className = 'meta-left';
+      const metaRight = document.createElement('div');
+      metaRight.className = 'meta-right';
+
       const name = document.createElement('span');
       name.className = 'name';
       name.style.color = color || '#c9cdfc';
       name.textContent = username;
-      const time = document.createElement('span');
-      time.className = 'time';
-      time.textContent = new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-      meta.appendChild(name);
+      metaLeft.appendChild(name);
+
       if (badges && badges.length) {
         for (const b of badges) {
           const el = document.createElement('span');
           el.className = 'badge';
           el.textContent = b;
-          meta.appendChild(el);
+          metaLeft.appendChild(el);
         }
       }
-      meta.appendChild(time);
+
+      const time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      metaRight.appendChild(time);
+
+      meta.appendChild(metaLeft);
+      meta.appendChild(metaRight);
 
       const body = document.createElement('div');
       body.className = 'text';
@@ -360,8 +385,10 @@
       wrap.appendChild(body);
       messagesEl.appendChild(wrap);
 
-      // Auto-scroll
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      // Auto-scroll only if user is near bottom
+      if (autoScroll) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
     }
 
     function guessColor(username) {
@@ -378,6 +405,12 @@
     function resetChat() {
       messagesEl.innerHTML = '';
       currentColorMap.clear();
+      autoScroll = true;
+    }
+
+    function atBottom() {
+      const el = messagesEl;
+      return (el.scrollHeight - el.clientHeight - el.scrollTop) <= SCROLL_BOTTOM_THRESHOLD;
     }
 
     function parseBadges(tags) {
@@ -391,7 +424,57 @@
       return list;
     }
 
-    async function connectChat(channel) {
+    function canSend() {
+      const token = getSavedToken();
+      const user = getSavedUser();
+      if (!token || !user || !user.login) return false;
+      if (user.scopes && !user.scopes.includes('chat:edit')) return false;
+      return isConnected && !!currentChannel;
+    }
+
+    function updateComposerState() {
+      if (!composer || !inputMsg || !sendBtn) return;
+      const enabled = canSend();
+      inputMsg.disabled = !enabled;
+      sendBtn.disabled = !enabled;
+      if (!enabled) {
+        inputMsg.placeholder = 'Login with Twitch and join a channel to chat';
+      } else {
+        inputMsg.placeholder = 'Type a message...';
+      }
+    }
+
+    async function sendMessage() {
+      const text = (inputMsg?.value || '').trim();
+      if (!text) return;
+      if (!canSend()) {
+        alert('You must be logged in with chat:edit and connected to send messages.');
+        return;
+      }
+      try {
+        const channelName = (currentChannel || '').replace(/^#/, '');
+        await client.say('#' + channelName, text);
+        const user = getSavedUser();
+        renderMessage({
+          timestamp: Date.now(),
+          username: user?.display_name || user?.login || 'Me',
+          color: '#cbb4ff',
+          badges: ['You'],
+          text
+        });
+        inputMsg.value = '';
+      } catch (e) {
+        renderMessage({
+          timestamp: Date.now(),
+          username: 'System',
+          color: '#ff9aa5',
+          badges: ['Error'],
+          text: 'Failed to send: ' + (e?.message || e)
+        });
+      }
+    }
+
+    async function connectChat(channel, token, login) {
       if (client) {
         try { await client.disconnect(); } catch {}
         client = null;
@@ -402,6 +485,9 @@
         connection: { reconnect: true, secure: true },
         channels: [channel]
       };
+      if (token && login) {
+        opts.identity = { username: login, password: 'oauth:' + token };
+      }
       client = new tmi.Client(opts);
 
       client.on('message', (ch, tags, message, self) => {
@@ -429,6 +515,7 @@
       try {
         await client.connect();
         currentChannel = channel;
+        updateComposerState();
       } catch (e) {
         setConnectionStatus(false, 'Failed to connect');
         renderMessage({
@@ -469,13 +556,24 @@
         return;
       }
       resetChat();
-      await connectChat(channel);
+      const token = getSavedToken();
+      const user = getSavedUser();
+      await connectChat(channel, token, user?.login);
     });
 
     clearBtn.addEventListener('click', resetChat);
 
     channelInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') joinBtn.click();
+    });
+
+    sendBtn.addEventListener('click', sendMessage);
+    inputMsg.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    messagesEl.addEventListener('scroll', () => {
+      autoScroll = atBottom();
     });
 
     // ========= Init: handle OAuth return, restore session =========
@@ -487,8 +585,8 @@
           const expected = localStorage.getItem(OAUTH_STATE_KEY);
           if (expected && expected !== parsed.state) throw new Error('State mismatch');
           const v = await validateToken(parsed.access_token);
-          // v.login, v.user_id
-          saveToken(parsed.access_token, { login: v.login, user_id: v.user_id, display_name: v.login });
+          // v.login, v.user_id, v.scopes
+          saveToken(parsed.access_token, { login: v.login, user_id: v.user_id, display_name: v.login, scopes: v.scopes || [] });
           // Clean hash
           history.replaceState(null, '', location.pathname + location.search);
         } catch (e) {
@@ -502,6 +600,7 @@
       const token = getSavedToken();
       const user = getSavedUser();
       setLoggedIn(user);
+      updateComposerState();
 
       // If query channel provided ?channel=foo, auto-join
       const url = new URL(location.href);
@@ -509,7 +608,7 @@
       if (qChannel) {
         channelInput.value = qChannel;
         if (qChannel) {
-          await connectChat(qChannel);
+          await connectChat(qChannel, token, user?.login);
         }
       }
     })();
