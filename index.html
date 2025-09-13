@@ -126,11 +126,16 @@
     }
     .messages{
       overflow:auto;padding:16px 12px 12px;
-      display:flex;flex-direction:column;gap:8px;
+      display:flex;flex-direction:column;gap:2px; /* tighter spacing */
       scroll-behavior:smooth;
       min-height:0; /* critical for flex/grid children to allow scrolling */
       max-height:100%;
+      scrollbar-gutter: stable both-edges; /* prevent layout shift when scrollbars appear */
+      /* Hide scrollbars cross-browser */
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE 10+ */
     }
+    .messages::-webkit-scrollbar{ width:0; height:0 } /* WebKit */
     .msg{
       display:flex;
       flex-direction:column;
@@ -151,17 +156,17 @@
     .badge{
       display:inline-flex;align-items:center;gap:4px;font-size:11px;
       background:#2a2f5a;border:1px solid #3a3f6a;color:#e1e3ff;
-      border-radius:999px;padding:0 6px;
+      border-radius:999px;padding:0 5px; /* smaller label padding */
     }
     .name{font-weight:700}
-    .time{color:#9aa1b5; white-space:nowrap}
-    .text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eef0ff}
+    .time{display:none}
+    .text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eef0ff;font-size:16px}
 
     .composer{
       display:flex;gap:10px;padding:12px;border-top:1px solid #2b3154;background:#121632aa;border-radius:0 0 var(--radius) var(--radius)
     }
     .resume-pill{
-      position:absolute;left:50%;transform:translateX(-50%);
+      position:absolute;left:50%;right:auto;transform:translateX(-50%);margin:0;width:auto; /* precise center */
       bottom:58px; /* above composer */
       padding:6px 12px;
       font-size:12px;
@@ -173,6 +178,7 @@
       opacity:.9;
       transition: opacity .2s ease;
       z-index: 5;
+      outline:none; display:inline-flex; align-items:center; justify-content:center; pointer-events:auto; user-select:none;
     }
     .resume-pill:hover{ opacity:1 }
     .info{
@@ -261,6 +267,7 @@
     const OAUTH_STATE_KEY = 'tw_state';
     const TOKEN_KEY = 'tw_access_token';
     const USER_KEY = 'tw_user';
+    const CHANNEL_KEY = 'tw_channel';
 
     function buildAuthUrl() {
       const scopes = [
@@ -276,7 +283,7 @@
         redirect_uri: REDIRECT_URI,
         response_type: 'token',
         scope: scopes.join(' '),
-        force_verify: 'false',
+        force_verify: 'true',
         state
       });
       return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
@@ -389,15 +396,6 @@
       name.textContent = username;
       metaLeft.appendChild(name);
 
-      if (badges && badges.length) {
-        for (const b of badges) {
-          const el = document.createElement('span');
-          el.className = 'badge';
-          el.textContent = b;
-          metaLeft.appendChild(el);
-        }
-      }
-
       // Separator and one-line message text
       metaLeft.appendChild(document.createTextNode(': '));
       const textSpan = document.createElement('span');
@@ -405,10 +403,15 @@
       textSpan.textContent = text;
       metaLeft.appendChild(textSpan);
 
-      const time = document.createElement('span');
-      time.className = 'time';
-      time.textContent = new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-      metaRight.appendChild(time);
+      // Badges on the right
+      if (badges && badges.length) {
+        for (const b of badges) {
+          const el = document.createElement('span');
+          el.className = 'badge';
+          el.textContent = b;
+          metaRight.appendChild(el);
+        }
+      }
 
       meta.appendChild(metaLeft);
       meta.appendChild(metaRight);
@@ -461,8 +464,8 @@
     function canSend() {
       const token = getSavedToken();
       const user = getSavedUser();
-      if (!token || !user || !user.login) return false;
-      if (user.scopes && !user.scopes.includes('chat:edit')) return false;
+      // Require identity token and login to attempt sending
+      if (!token || !(user && user.login)) return false;
       return isConnected && !!currentChannel;
     }
 
@@ -487,7 +490,7 @@
       const text = (inputMsg?.value || '').trim();
       if (!text) return;
       if (!canSend()) {
-        alert('You must be logged in with chat:edit and connected to send messages.');
+        alert('You must be logged in and connected to send messages.');
         return;
       }
       try {
@@ -555,6 +558,7 @@
         await client.connect();
         currentChannel = channel;
         updateComposerState();
+        updateHash(channel);
       } catch (e) {
         setConnectionStatus(false, 'Failed to connect');
         renderMessage({
@@ -597,6 +601,7 @@
       resetChat();
       const token = getSavedToken();
       const user = getSavedUser();
+      updateHash(channel);
       await connectChat(channel, token, user?.login);
     });
 
@@ -635,12 +640,58 @@
     });
 
     resumeBtn.addEventListener('click', () => {
+      // Reset any prior intent and resume immediately
       autoScroll = true;
-      updateResumeUI();
+      if (typeof userIntentTimer !== 'undefined' && userIntentTimer) clearTimeout(userIntentTimer);
+      if (typeof userScrollIntent !== 'undefined') userScrollIntent = false;
       messagesEl.scrollTop = messagesEl.scrollHeight;
+      updateResumeUI();
     });
 
     // ========= Init: handle OAuth return, restore session =========
+    function getChannelFromUrl() {
+      const raw = (location.hash || '').replace(/^#/, '').trim();
+      // If hash looks like OAuth fragment (contains '=') treat as not a channel
+      if (raw && !raw.includes('=')) return decodeURIComponent(raw);
+      const url = new URL(location.href);
+      const q = (url.searchParams.get('channel') || '').trim();
+      if (q) {
+        const cleaned = q.replace(/^#/, '');
+        history.replaceState(null, '', '#' + encodeURIComponent(cleaned));
+        try { localStorage.setItem(CHANNEL_KEY, cleaned); } catch {}
+        return cleaned;
+      }
+      try {
+        const stored = localStorage.getItem(CHANNEL_KEY) || '';
+        return stored;
+      } catch { return '' }
+    }
+
+    function updateHash(channel) {
+      if (channel) {
+        history.replaceState(null, '', '#' + encodeURIComponent(channel));
+        try { localStorage.setItem(CHANNEL_KEY, channel); } catch {}
+      }
+    }
+
+    async function reconnectWithIdentityIfNeeded() {
+      const token = getSavedToken();
+      const user = getSavedUser();
+      if (currentChannel && token && user?.login) {
+        await connectChat(currentChannel, token, user.login);
+      }
+    }
+
+    window.addEventListener('hashchange', async () => {
+      const chan = getChannelFromUrl();
+      if (chan && chan.toLowerCase() !== (currentChannel || '').replace(/^#/, '').toLowerCase()) {
+        resetChat();
+        const token = getSavedToken();
+        const user = getSavedUser();
+        await connectChat(chan, token, user?.login);
+      }
+    });
+
     (async function init() {
       // Handle OAuth redirect hash
       const parsed = parseHashFragment();
@@ -651,8 +702,13 @@
           const v = await validateToken(parsed.access_token);
           // v.login, v.user_id, v.scopes
           saveToken(parsed.access_token, { login: v.login, user_id: v.user_id, display_name: v.login, scopes: v.scopes || [] });
-          // Clean hash
-          history.replaceState(null, '', location.pathname + location.search);
+          // Clean OAuth fragment from hash but preserve channel if we have one stored
+          let channelToKeep = '';
+          try { channelToKeep = localStorage.getItem(CHANNEL_KEY) || ''; } catch {}
+          const newHash = channelToKeep ? ('#' + encodeURIComponent(channelToKeep)) : '';
+          history.replaceState(null, '', location.pathname + location.search + newHash);
+          // If already in a channel, reconnect with identity
+          await reconnectWithIdentityIfNeeded();
         } catch (e) {
           console.error(e);
           alert('Login failed: ' + (e?.message || e));
@@ -667,14 +723,11 @@
       updateComposerState();
       updateResumeUI();
 
-      // If query channel provided ?channel=foo, auto-join
-      const url = new URL(location.href);
-      const qChannel = (url.searchParams.get('channel') || '').trim();
-      if (qChannel) {
-        channelInput.value = qChannel;
-        if (qChannel) {
-          await connectChat(qChannel, token, user?.login);
-        }
+      // If channel provided via hash or query, auto-join
+      const targetChannel = getChannelFromUrl();
+      if (targetChannel) {
+        channelInput.value = targetChannel;
+        await connectChat(targetChannel, token, user?.login);
       }
     })();
   </script>
