@@ -31,6 +31,8 @@
       flex-direction:column;
       gap:16px;
     }
+    /* Preact root mirrors body flex so the internal layout is height-constrained */
+    #app{ display:flex; flex-direction:column; gap:16px; min-height:100vh }
     header{
       display:flex;
       align-items:center;
@@ -87,7 +89,7 @@
       box-shadow: var(--shadow);
       height:100%;
       display:grid;
-      grid-template-rows: 48px 56px minmax(0, 1fr); /* fixed header + controls heights, stable chat */
+      grid-template-rows: 48px 68px minmax(0, 1fr); /* fixed header + controls heights (40px + 14px*2), stable chat */
       min-height:0; /* allow chat to shrink/scroll */
       overflow:hidden; /* keep internal scroll only */
     }
@@ -131,10 +133,9 @@
     }
     .messages{
       overflow:auto;padding:8px 12px 8px;
-      display:block; /* let VirtualList control internals */
+      height:100%;
       scroll-behavior:smooth;
       min-height:0; /* critical for flex/grid children to allow scrolling */
-      max-height:100%;
       scrollbar-gutter: stable both-edges; /* prevent layout shift when scrollbars appear */
       /* Hide scrollbars cross-browser */
       scrollbar-width: none; /* Firefox */
@@ -214,7 +215,7 @@
   </script>
   <script type="module">
     import { h, render } from 'preact';
-    import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
+    import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'preact/hooks';
     import htm from 'htm';
     import tmi from 'https://esm.sh/tmi.js@1.8.5';
     const html = htm.bind(h);
@@ -294,6 +295,8 @@
       const clientRef = useRef(null);
       const listRef = useRef(null);
       const [autoScroll, setAutoScroll] = useState(true);
+      const scrollIntentRef = useRef(false);
+      const intentTimerRef = useRef(null);
 
       // Legacy DOM is no longer used; Preact renders the full UI.
 
@@ -355,14 +358,33 @@
         if (!el) return true;
         return (el.scrollHeight - el.clientHeight - el.scrollTop) <= 24;
       }, []);
+      // Track user scroll intent to avoid disabling autoscroll due to programmatic scrolls
       useEffect(() => {
         const el = listRef.current; if (!el) return;
-        const onScroll = () => setAutoScroll(atBottom());
+        const onUserIntent = () => {
+          scrollIntentRef.current = true;
+          if (intentTimerRef.current) clearTimeout(intentTimerRef.current);
+          intentTimerRef.current = setTimeout(() => { scrollIntentRef.current = false; }, 700);
+        };
+        const onScroll = () => {
+          if (!scrollIntentRef.current) return; // ignore programmatic scrolls
+          setAutoScroll(atBottom());
+        };
+        el.addEventListener('wheel', onUserIntent, { passive: true });
+        el.addEventListener('touchstart', onUserIntent, { passive: true });
+        el.addEventListener('mousedown', onUserIntent);
         el.addEventListener('scroll', onScroll, { passive: true });
-        return () => el.removeEventListener('scroll', onScroll);
+        return () => {
+          el.removeEventListener('wheel', onUserIntent);
+          el.removeEventListener('touchstart', onUserIntent);
+          el.removeEventListener('mousedown', onUserIntent);
+          el.removeEventListener('scroll', onScroll);
+        };
       }, [atBottom]);
-      useEffect(() => {
-        if (autoScroll) { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }
+      useLayoutEffect(() => {
+        if (!autoScroll) return;
+        const el = listRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
       }, [messages.length, autoScroll]);
 
       // Actions
@@ -426,7 +448,7 @@
               </div>
             </div>
             <div class="chat">
-              <div ref=${listRef} class="messages" style=${{ height: '100%' }}>
+              <div ref=${listRef} class="messages">
                 ${messages.map((row, idx) => html`<${MessageRow} key=${idx} ...${row} />`)}
               </div>
               <div class="composer">
