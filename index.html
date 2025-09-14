@@ -36,6 +36,7 @@
       align-items:center;
       justify-content:space-between;
       padding:16px 20px;
+      min-height:64px; /* keep header height stable */
     }
     .brand{
       display:flex;
@@ -58,6 +59,7 @@
       transition:.2s transform,.2s opacity,.2s background;
       box-shadow: var(--shadow);
       line-height:1;
+      display:inline-flex;align-items:center;justify-content:center;
     }
     button.secondary{
       background:transparent;border:1px solid #3a3f6a;color:var(--text);
@@ -85,7 +87,7 @@
       box-shadow: var(--shadow);
       height:100%;
       display:grid;
-      grid-template-rows: auto auto minmax(0, 1fr); /* status, controls, chat */
+      grid-template-rows: 48px 56px minmax(0, 1fr); /* fixed header + controls heights, stable chat */
       min-height:0; /* allow chat to shrink/scroll */
       overflow:hidden; /* keep internal scroll only */
     }
@@ -108,11 +110,13 @@
     .userline b{
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
-    .userline small{color:var(--muted)}
+    .userline small{color:var(--muted);white-space:nowrap}
 
     .field{
       display:flex;gap:8px;align-items:center;justify-content:flex-start;
+      flex-wrap:nowrap;white-space:nowrap;
     }
+    .field > *{ flex:0 0 auto }
     input[type="text"]{
       background:#10142a;border:1px solid #2b3154;color:var(--text);
       padding:10px 12px;border-radius:10px;min-width:220px;outline:none;
@@ -156,8 +160,8 @@
     .meta-right{margin-left:12px;flex:0 0 auto}
     .badge{
       display:inline-flex;align-items:center;gap:4px;font-size:11px;
-      background:#2a2f5a;border:1px solid #3a3f6a;color:#e1e3ff;
-      border-radius:999px;padding:0 5px; /* smaller label padding */
+      background:transparent;border:none;color:#e1e3ff;
+      text-transform:uppercase;letter-spacing:.3px;padding:0;
     }
     .name{font-weight:700}
     .time{display:none}
@@ -172,8 +176,10 @@
     .composer input, .composer button { height:40px }
     .controls .field input, .composer input { padding:0 12px }
     .controls .field button, .composer button { padding:0 14px }
+    .controls .field input, .composer input { border-radius:10px }
     .status{
       display:flex;gap:8px;align-items:center;color:#b9c0d6;font-size:13px;padding:8px 14px;border-bottom:1px solid #2b3154;background:#121632aa;border-radius: var(--radius) var(--radius) 0 0;
+      min-height:40px; white-space:nowrap; /* stable bar height, avoid wrapping */
     }
     .dot{
       width:8px;height:8px;border-radius:50%;
@@ -188,6 +194,8 @@
     @media (max-width:700px){
       .controls{grid-template-columns: 1fr; align-items:stretch}
       .field{justify-content:stretch}
+      /* On small screens, let rows size naturally to avoid overflow */
+      .panel{ grid-template-rows: auto auto minmax(0, 1fr) }
     }
   </style>
 
@@ -358,9 +366,32 @@
       }, [messages.length, autoScroll]);
 
       // Actions
-      const onLogin = () => { if (!TWITCH_CLIENT_ID || !REDIRECT_URI) return alert('Missing Twitch config'); location.href = buildAuthUrl(); };
-      const onLogout = async () => { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); setToken(''); setUser(null); try { await clientRef.current?.disconnect(); } catch {}; setConnected(false); };
-      const onJoin = () => { const c = (channelInput||'').trim().replace(/^#/, ''); if (!c) return; setChannel(c); setChannelInQuery(c); setMessages([]); };
+      const onLogin = () => {
+        if (!TWITCH_CLIENT_ID || !REDIRECT_URI) {
+          alert('Missing Twitch config');
+          return;
+        }
+        location.href = buildAuthUrl();
+      };
+
+      const onLogout = async () => {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        setToken('');
+        setUser(null);
+        try {
+          await clientRef.current?.disconnect();
+        } catch (_) {}
+        setConnected(false);
+      };
+
+      const onJoin = () => {
+        const c = (channelInput || '').trim().replace(/^#/, '');
+        if (!c) return;
+        setChannel(c);
+        setChannelInQuery(c);
+        setMessages([]);
+      };
       const canSend = !!token && !!user?.login && connected && !!channel;
       const onSend = async (text) => {
         const t = (text||'').trim(); if (!t) return; if (!canSend) return alert('Login and connect first');
