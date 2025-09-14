@@ -238,6 +238,8 @@
     const OAUTH_STATE_KEY = 'tw_state';
     const TOKEN_KEY = 'tw_access_token';
     const USER_KEY = 'tw_user';
+    const HISTORY_PREFIX = 'tw_history:';
+    const HISTORY_CAP = 1000;
 
     // OAuth helpers
     const buildAuthUrl = () => {
@@ -339,6 +341,39 @@
         return () => window.removeEventListener('popstate', onPop);
       }, []);
 
+      // Load persisted history when channel changes
+      useEffect(() => {
+        if (!channel) return;
+        try {
+          const key = HISTORY_PREFIX + channel.toLowerCase();
+          const s = localStorage.getItem(key);
+          if (s) {
+            const arr = JSON.parse(s);
+            if (Array.isArray(arr)) {
+              setMessages(arr.slice(-HISTORY_CAP));
+              setAutoScroll(true);
+            }
+          } else {
+            setMessages([]);
+            setAutoScroll(true);
+          }
+        } catch (_) {
+          // ignore storage errors
+        }
+      }, [channel]);
+
+      // Persist history whenever messages change
+      useEffect(() => {
+        if (!channel) return;
+        try {
+          const key = HISTORY_PREFIX + channel.toLowerCase();
+          const trimmed = messages.slice(-HISTORY_CAP);
+          localStorage.setItem(key, JSON.stringify(trimmed));
+        } catch (_) {
+          // ignore storage errors
+        }
+      }, [messages, channel]);
+
       // Connect when channel or identity changes
       useEffect(() => {
         if (!channel) return;
@@ -352,13 +387,17 @@
           clientRef.current = client;
           client.on('connected', () => { if (!cancelled) { setConnected(true); setConnecting(false); } });
           client.on('disconnected', () => { if (!cancelled) setConnected(false); });
-          client.on('message', (ch, tags, msg) => {
+          client.on('message', (ch, tags, msg, self) => {
             if (cancelled) return;
             if (ch.replace('#','').toLowerCase() !== channel.toLowerCase()) return;
             const username = tags['display-name'] || tags.username || 'user';
             const color = tags.color || guessColor(username);
             const badges = parseBadges(tags);
-            setMessages(m => [...m, { username, color, badges, text: msg }]);
+            const row = { username, color, badges, text: msg, ts: Date.now(), self: !!self };
+            setMessages(m => {
+              const next = m.concat(row);
+              return next.length > HISTORY_CAP ? next.slice(-HISTORY_CAP) : next;
+            });
           });
           try { await client.connect(); } catch (e) { console.error(e); setConnecting(false); setConnected(false); }
         })();
@@ -431,7 +470,12 @@
       const canSend = !!token && !!user?.login && connected && !!channel;
       const onSend = async (text) => {
         const t = (text||'').trim(); if (!t) return; if (!canSend) return alert('Login and connect first');
-        try { await clientRef.current?.say('#'+channel, t); setMessages(m => [...m, { username: user.display_name||user.login, color:'#cbb4ff', badges:['You'], text: t }]); } catch (e) { console.error(e); }
+        try { await clientRef.current?.say('#'+channel, t); } catch (e) { console.error(e); }
+      };
+      const onClear = () => {
+        setMessages([]);
+        if (!channel) return;
+        try { localStorage.removeItem(HISTORY_PREFIX + channel.toLowerCase()); } catch (_) {}
       };
       const onResume = (e) => {
         if (e && e.preventDefault) e.preventDefault();
@@ -477,7 +521,7 @@
                 <button onClick=${onJoin}>Join</button>
               </div>
               <div class="field">
-                <button class="secondary" onClick=${()=>setMessages([])}>Clear</button>
+                <button class="secondary" onClick=${onClear}>Clear</button>
               </div>
             </div>
             <div class="chat">
