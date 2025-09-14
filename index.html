@@ -732,12 +732,12 @@
     })();
   </script>
   <!-- Load tmi.js UMD to avoid ESM/CORS issues; exposes window.tmi -->
-  <script src="https://unpkg.com/tmi.js@1.8.5/dist/tmi.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
   <script type="module">
-    import { h, render } from 'https://unpkg.com/preact@10.19.6?module';
-    import { useState, useEffect, useRef, useCallback } from 'https://unpkg.com/preact@10.19.6/hooks/dist/hooks.module.js';
-    import htm from 'https://unpkg.com/htm@3.1.1?module';
-    import VirtualList from 'https://unpkg.com/preact-virtual-list@3.0.1?module';
+    import { h, render } from 'https://cdn.jsdelivr.net/npm/preact@10.19.6/dist/preact.module.js';
+    import { useState, useEffect, useRef, useCallback } from 'https://cdn.jsdelivr.net/npm/preact@10.19.6/hooks/dist/hooks.module.js';
+    import htm from 'https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.module.js';
+    import VirtualList from 'https://cdn.jsdelivr.net/npm/preact-virtual-list@3.0.1/+esm';
     const html = htm.bind(h);
     const tmi = window.tmi;
 
