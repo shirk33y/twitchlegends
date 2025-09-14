@@ -179,15 +179,16 @@
     .controls .field button, .composer button { padding:0 14px }
     /* Resume pill button overlay */
     .resume-pill{
-      position:absolute;left:50%;transform:translateX(-50%);
+      position:absolute;left:0;right:0;transform:none;margin:0 auto;width:max-content;
       bottom:56px; /* sit above composer (40px) + padding */
       padding:6px 12px;font-size:12px;
       background:#0b0e2ccc;color:var(--text);
       border:1px solid #3a3f6a;border-radius:999px;
       box-shadow: var(--shadow);
-      outline:none;display:inline-flex;align-items:center;justify-content:center;
+      outline:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
       user-select:none;pointer-events:auto;z-index:5;
     }
+    .resume-pill:active{ transform:none }
     .controls .field input, .composer input { border-radius:10px }
     .status{
       display:flex;gap:8px;align-items:center;color:#b9c0d6;font-size:13px;padding:8px 14px;border-bottom:1px solid #2b3154;background:#121632aa;border-radius: var(--radius) var(--radius) 0 0;
@@ -308,6 +309,7 @@
       const [autoScroll, setAutoScroll] = useState(true);
       const scrollIntentRef = useRef(false);
       const intentTimerRef = useRef(null);
+      const resumingRef = useRef(false);
 
       // Legacy DOM is no longer used; Preact renders the full UI.
 
@@ -378,6 +380,7 @@
           intentTimerRef.current = setTimeout(() => { scrollIntentRef.current = false; }, 700);
         };
         const onScroll = () => {
+          if (resumingRef.current) return; // ignore scrolls during resume
           if (!scrollIntentRef.current) return; // ignore programmatic scrolls
           setAutoScroll(atBottom());
         };
@@ -430,10 +433,24 @@
         const t = (text||'').trim(); if (!t) return; if (!canSend) return alert('Login and connect first');
         try { await clientRef.current?.say('#'+channel, t); setMessages(m => [...m, { username: user.display_name||user.login, color:'#cbb4ff', badges:['You'], text: t }]); } catch (e) { console.error(e); }
       };
-      const onResume = () => {
+      const onResume = (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+        // Immediately re-enable autoscroll and hide the pill
         setAutoScroll(true);
+        // Stop treating subsequent scroll as user-initiated for a short window
+        scrollIntentRef.current = false;
+        if (intentTimerRef.current) { clearTimeout(intentTimerRef.current); intentTimerRef.current = null; }
+        resumingRef.current = true;
         const el = listRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
+        // Double rAF to ensure layout is committed before scrolling
+        requestAnimationFrame(() => {
+          if (el) el.scrollTop = el.scrollHeight;
+          requestAnimationFrame(() => {
+            if (el) el.scrollTop = el.scrollHeight;
+            setTimeout(() => { resumingRef.current = false; }, 200);
+          });
+        });
       };
 
       return html`
